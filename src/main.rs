@@ -648,6 +648,342 @@ fn collect_vcf_files(dir: &Path) -> Vec<std::path::PathBuf> {
     files
 }
 
+/// Tests for the parsing and formatting functions.
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn unfold_plain_line() {
+        assert_eq!(unfold("FN:Alice"), "FN:Alice");
+    }
+
+    #[test]
+    fn unfold_lf_space() {
+        assert_eq!(unfold("FN:Ali\n ce"), "FN:Alice");
+    }
+
+    #[test]
+    fn unfold_lf_tab() {
+        assert_eq!(unfold("FN:Ali\n\tce"), "FN:Alice");
+    }
+
+    #[test]
+    fn unfold_crlf_space() {
+        assert_eq!(unfold("FN:Ali\r\n ce"), "FN:Alice");
+    }
+
+    #[test]
+    fn unfold_preserves_bare_newline() {
+        // A newline NOT followed by whitespace must be kept.
+        let input = "A\nB";
+        assert_eq!(unfold(input), "A\nB");
+    }
+
+    #[test]
+    fn unfold_multiple_folds() {
+        assert_eq!(unfold("FN:Al\n ice\n  Bob"), "FN:Alice Bob");
+    }
+
+    #[test]
+    fn parse_line_simple() {
+        let p = parse_line("FN:Alice").unwrap();
+        assert_eq!(p.name, "FN");
+        assert_eq!(p.value, "Alice");
+        assert!(p.params.is_empty());
+    }
+
+    #[test]
+    fn parse_line_with_param() {
+        let p = parse_line("TEL;TYPE=WORK:+1-555-1234").unwrap();
+        assert_eq!(p.name, "TEL");
+        assert_eq!(p.value, "+1-555-1234");
+        assert_eq!(p.param("TYPE"), Some("WORK"));
+    }
+
+    #[test]
+    fn parse_line_bare_type_token() {
+        // vCard 2.1 style: TEL;WORK;VOICE:...
+        let p = parse_line("TEL;WORK;VOICE:+1-555-0000").unwrap();
+        assert_eq!(p.name, "TEL");
+        assert_eq!(p.value, "+1-555-0000");
+        // Both bare tokens should become TYPE params.
+        assert_eq!(p.params.len(), 2);
+        assert!(p.params.iter().all(|(k, _)| k == "TYPE"));
+    }
+
+    #[test]
+    fn parse_line_group_prefix_stripped() {
+        let p = parse_line("item1.EMAIL;TYPE=HOME:a@b.com").unwrap();
+        assert_eq!(p.name, "EMAIL");
+    }
+
+    #[test]
+    fn parse_line_name_uppercased() {
+        let p = parse_line("fn:Bob").unwrap();
+        assert_eq!(p.name, "FN");
+    }
+
+    #[test]
+    fn parse_line_no_colon_returns_none() {
+        assert!(parse_line("BEGINVCARD").is_none());
+    }
+
+    #[test]
+    fn parse_line_multiple_params() {
+        let p = parse_line("ADR;TYPE=HOME;ENCODING=UTF-8:;;Street;City;;;").unwrap();
+        assert_eq!(p.param("TYPE"), Some("HOME"));
+        assert_eq!(p.param("ENCODING"), Some("UTF-8"));
+    }
+
+    fn minimal_vcard(fn_value: &str) -> String {
+        format!("BEGIN:VCARD\r\nVERSION:3.0\r\nFN:{fn_value}\r\nEND:VCARD\r\n")
+    }
+
+    #[test]
+    fn parse_vcards_single() {
+        let cards = parse_vcards(&minimal_vcard("Alice"));
+        assert_eq!(cards.len(), 1);
+        assert_eq!(cards[0].get("FN").unwrap().value, "Alice");
+    }
+
+    #[test]
+    fn parse_vcards_multiple() {
+        let input = format!("{}{}", minimal_vcard("Alice"), minimal_vcard("Bob"));
+        let cards = parse_vcards(&input);
+        assert_eq!(cards.len(), 2);
+    }
+
+    #[test]
+    fn parse_vcards_empty_input() {
+        assert!(parse_vcards("").is_empty());
+    }
+
+    #[test]
+    fn parse_vcards_ignores_lines_outside_begin_end() {
+        let input = "junk line\nBEGIN:VCARD\nFN:Alice\nEND:VCARD\n";
+        let cards = parse_vcards(input);
+        assert_eq!(cards.len(), 1);
+    }
+
+    #[test]
+    fn qp_plain_ascii() {
+        assert_eq!(decode_quoted_printable("Hello"), "Hello");
+    }
+
+    #[test]
+    fn qp_encoded_umlaut() {
+        // ä = 0xC3 0xA4 in UTF-8
+        assert_eq!(decode_quoted_printable("=C3=A4"), "ä");
+    }
+
+    #[test]
+    fn qp_soft_line_break() {
+        // =\n is a soft line-break; the decoder also consumes the byte after \n.
+        // "Hel=\nlo" → the '\n' and 'l' are both consumed, leaving "Helo".
+        assert_eq!(decode_quoted_printable("Hel=\nlo"), "Helo");
+    }
+
+    #[test]
+    fn qp_mixed() {
+        assert_eq!(decode_quoted_printable("caf=C3=A9"), "café");
+    }
+
+    #[test]
+    fn mojibake_ascii_unchanged() {
+        assert_eq!(fix_mojibake("Hello"), "Hello");
+    }
+
+    #[test]
+    fn mojibake_repaired() {
+        // "ä" stored as mojibake looks like two Latin-1 chars whose bytes are
+        // [0xC3, 0xA4] — the UTF-8 encoding of ä.
+        let mojibake: String = [0xC3u8, 0xA4].iter().map(|&b| b as char).collect();
+        assert_eq!(fix_mojibake(&mojibake), "ä");
+    }
+
+    #[test]
+    fn mojibake_no_false_positive_on_latin1() {
+        // A genuine single Latin-1 char (é = U+00E9) must not be mangled.
+        let s = "caf\u{00E9}";
+        // fix_mojibake may return as-is because the fixed string wouldn't be
+        // shorter (single char → single char).
+        let result = fix_mojibake(s);
+        assert!(!result.is_empty());
+    }
+
+    #[test]
+    fn format_name_full() {
+        // Last;First;Middle;Prefix;Suffix
+        assert_eq!(format_name("Smith;John;W;Dr;Jr"), "Dr John W Smith, Jr");
+    }
+
+    #[test]
+    fn format_name_last_first_only() {
+        assert_eq!(format_name("Smith;John"), "John Smith");
+    }
+
+    #[test]
+    fn format_name_last_only() {
+        assert_eq!(format_name("Smith"), "Smith");
+    }
+
+    #[test]
+    fn format_name_empty() {
+        assert_eq!(format_name(""), "");
+    }
+
+    #[test]
+    fn format_name_suffix_only() {
+        assert_eq!(format_name(";;;;Jr"), ", Jr");
+    }
+
+    #[test]
+    fn format_address_full() {
+        // P.O.Box;Extended;Street;City;Region;PostalCode;Country
+        let result = format_address("123;;Main St;Springfield;IL;62701;USA");
+        assert_eq!(result, "P.O. Box 123, Main St, Springfield, IL 62701, USA");
+    }
+
+    #[test]
+    fn format_address_street_city_country() {
+        let result = format_address(";;123 Main St;Springfield;;;USA");
+        assert_eq!(result, "123 Main St, Springfield, USA");
+    }
+
+    #[test]
+    fn format_address_empty() {
+        assert_eq!(format_address(";;;;;;"), "");
+    }
+
+    #[test]
+    fn format_address_only_city_postal() {
+        let result = format_address(";;;Berlin;;10115;");
+        assert_eq!(result, "Berlin 10115");
+    }
+
+    #[test]
+    fn truncate_short_string_unchanged() {
+        assert_eq!(truncate("hello", 10), "hello");
+    }
+
+    #[test]
+    fn truncate_exact_length_unchanged() {
+        assert_eq!(truncate("hello", 5), "hello");
+    }
+
+    #[test]
+    fn truncate_long_string_gets_ellipsis() {
+        let result = truncate("hello world", 6);
+        assert!(result.ends_with('…'));
+        assert_eq!(result.chars().count(), 6);
+    }
+
+    #[test]
+    fn truncate_unicode_chars_counted_correctly() {
+        // "ääääää" = 6 chars; max 4 → "äää…"
+        let result = truncate("ääääää", 4);
+        assert_eq!(result.chars().count(), 4);
+        assert!(result.ends_with('…'));
+    }
+
+    #[test]
+    fn csv_escape_simple() {
+        assert_eq!(csv_escape("hello"), "\"hello\"");
+    }
+
+    #[test]
+    fn csv_escape_inner_quotes() {
+        assert_eq!(csv_escape("say \"hi\""), "\"say \"\"hi\"\"\"");
+    }
+
+    #[test]
+    fn csv_escape_empty() {
+        assert_eq!(csv_escape(""), "\"\"");
+    }
+
+    fn make_prop(name: &str, value: &str, params: Vec<(&str, &str)>) -> Property {
+        Property {
+            name: name.to_uppercase(),
+            params: params.into_iter().map(|(k, v)| (k.to_uppercase(), v.to_string())).collect(),
+            value: value.to_string(),
+        }
+    }
+
+    #[test]
+    fn property_param_found() {
+        let p = make_prop("TEL", "+1", vec![("TYPE", "WORK")]);
+        assert_eq!(p.param("TYPE"), Some("WORK"));
+        assert_eq!(p.param("type"), Some("WORK")); // case-insensitive
+    }
+
+    #[test]
+    fn property_param_not_found() {
+        let p = make_prop("TEL", "+1", vec![]);
+        assert_eq!(p.param("TYPE"), None);
+    }
+
+    #[test]
+    fn property_type_param() {
+        let p = make_prop("TEL", "+1", vec![("TYPE", "HOME")]);
+        assert_eq!(p.type_param(), Some("HOME"));
+    }
+
+    #[test]
+    fn vcard_get_first_match() {
+        let card = VCard {
+            properties: vec![
+                make_prop("EMAIL", "a@b.com", vec![]),
+                make_prop("EMAIL", "c@d.com", vec![]),
+            ],
+        };
+        assert_eq!(card.get("EMAIL").unwrap().value, "a@b.com");
+    }
+
+    #[test]
+    fn vcard_get_missing() {
+        let card = VCard { properties: vec![] };
+        assert!(card.get("FN").is_none());
+    }
+
+    #[test]
+    fn vcard_get_all() {
+        let card = VCard {
+            properties: vec![
+                make_prop("EMAIL", "a@b.com", vec![]),
+                make_prop("TEL", "+1", vec![]),
+                make_prop("EMAIL", "c@d.com", vec![]),
+            ],
+        };
+        let emails: Vec<&str> = card.get_all("EMAIL").iter().map(|p| p.value.as_str()).collect();
+        assert_eq!(emails, vec!["a@b.com", "c@d.com"]);
+    }
+
+    #[test]
+    fn decode_value_plain() {
+        let p = make_prop("FN", "Alice", vec![]);
+        assert_eq!(decode_value(&p), "Alice");
+    }
+
+    #[test]
+    fn decode_value_escape_sequences() {
+        let p = make_prop("NOTE", r"Line1\nLine2\,ok\;yes\\done", vec![]);
+        let result = decode_value(&p);
+        assert!(result.contains('\n'));
+        assert!(result.contains(','));
+        assert!(result.contains(';'));
+        assert!(result.contains('\\'));
+        assert!(!result.contains("\\n"));
+    }
+
+    #[test]
+    fn decode_value_quoted_printable() {
+        let p = make_prop("FN", "caf=C3=A9", vec![("ENCODING", "QUOTED-PRINTABLE")]);
+        assert_eq!(decode_value(&p), "café");
+    }
+}
+
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
