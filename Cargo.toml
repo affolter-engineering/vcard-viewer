@@ -1,0 +1,18 @@
+[package]
+name = "vcard-viewer"
+version = "0.1.1"
+edition = "2024"
+description = "Command-line vCard tool that parses and displays vCards"
+authors = ["Fabian Affolter <fabian@affolter-engineering.ch>"]
+repository = "https://github.com/affolter-engineering/vcard-viewer"
+license = "MIT"
+readme = "README.md"
+keywords = ["vcard", "contacts", "cli", "viewer"]
+categories = ["command-line-utilities"]
+
+[[bin]]
+name = "vcard-viewer"
+path = "src/main.rs"
+
+[dependencies]
+colored = "2"
