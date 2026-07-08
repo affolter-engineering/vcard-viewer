@@ -1,0 +1,13 @@
+BEGIN:VCARD
+VERSION:3.0
+FN;CHARSET=UTF-8:Fabian Affolter
+N;CHARSET=UTF-8:Affolter;Fabian;;Mr.;
+NICKNAME;CHARSET=UTF-8:@fabaff
+EMAIL;CHARSET=UTF-8;type=HOME,INTERNET:fabian@affolter-engineering.ch
+TEL;TYPE=WORK,VOICE:+41315110660
+ADR;CHARSET=UTF-8;TYPE=HOME:;;;Berne;BE;3014;Switzerland
+ADR;CHARSET=UTF-8;TYPE=WORK:;;;Berne;BE;3014;Switzerland
+ORG;CHARSET=UTF-8:affolter engineering
+URL;type=WORK;CHARSET=UTF-8:https://affolter-engineering.ch
+REV:2026-07-08T22:53:26.487Z
+END:VCARD
