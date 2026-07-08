@@ -9,7 +9,6 @@ license = "MIT"
 readme = "README.md"
 keywords = ["vcard", "contacts", "cli", "viewer"]
 categories = ["command-line-utilities"]
-rust-version = "1.80"
 
 [[bin]]
 name = "vcard-viewer"
