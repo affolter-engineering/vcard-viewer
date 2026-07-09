@@ -987,6 +987,11 @@ mod tests {
 fn main() {
     let args: Vec<String> = env::args().collect();
 
+    if args.iter().any(|a| a == "-V" || a == "--version") {
+        println!("{} {}", env!("CARGO_PKG_NAME"), env!("CARGO_PKG_VERSION"));
+        process::exit(0);
+    }
+
     if args.len() < 2 || args.iter().any(|a| a == "-h" || a == "--help") {
         eprintln!("Usage: {} [--csv] <file.vcf | directory>", args[0]);
         eprintln!();
@@ -995,6 +1000,7 @@ fn main() {
         eprintln!();
         eprintln!("Options:");
         eprintln!("  --csv       Output data as RFC 4180 CSV (to stdout)");
+        eprintln!("  -V, --version  Print version");
         eprintln!();
         eprintln!("Supports vCard 2.1, 3.0, and 4.0.");
         process::exit(1);

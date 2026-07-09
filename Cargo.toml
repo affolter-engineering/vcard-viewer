@@ -1,6 +1,6 @@
 [package]
 name = "vcard-viewer"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2024"
 description = "Command-line vCard tool that parses and displays vCards"
 authors = ["Fabian Affolter <fabian@affolter-engineering.ch>"]
